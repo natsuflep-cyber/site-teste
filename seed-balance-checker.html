@@ -1,0 +1,394 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Gerador de SEED Trust Wallet + Verificador de Saldo</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      background-color: #f5f5f5;
+      margin: 0;
+      padding: 20px;
+      color: #333;
+    }
+    .container {
+      max-width: 800px;
+      margin: 0 auto;
+      background: white;
+      padding: 20px;
+      border-radius: 10px;
+      box-shadow: 0 0 10px rgba(0,0,0,0.1);
+    }
+    h1 {
+      text-align: center;
+      color: #555;
+    }
+    button {
+      background: #28a745;
+      color: white;
+      border: none;
+      padding: 10px 20px;
+      border-radius: 5px;
+      cursor: pointer;
+      font-size: 16px;
+      margin: 10px 0;
+    }
+    button:hover {
+      background: #218838;
+    }
+    button:disabled {
+      background: #6c757d;
+    }
+    input, select {
+      width: 100%;
+      padding: 10px;
+      margin: 8px 0;
+      border: 1px solid #ddd;
+      border-radius: 5px;
+    }
+    .seed-box {
+      background: #f8f9fa;
+      border: 1px solid #ddd;
+      padding: 15px;
+      margin: 10px 0;
+      border-radius: 5px;
+      word-break: break-all;
+    }
+    .address-box {
+      background: #e9ecef;
+      padding: 10px;
+      margin: 8px 0;
+      border-radius: 5px;
+      font-family: monospace;
+      font-size: 14px;
+    }
+    .balance-box {
+      background: #fff3cd;
+      padding: 10px;
+      margin: 10px 0;
+      border-radius: 5px;
+      border-left: 4px solid #ffc107;
+    }
+    .loading {
+      text-align: center;
+      font-size: 18px;
+      color: #666;
+    }
+    .success {
+      color: #28a745;
+    }
+    .error {
+      color: #dc3545;
+    }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+      gap: 10px;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>🔑 Gerador de SEED Trust Wallet + Verificador de Saldo</h1>
+
+    <div>
+      <label>Blockchains para verificar (selecione pelo menos 1):</label><br>
+      <select id="blockchains" multiple size="5">
+        <option value="ethereum" selected>Ethereum (ETH, ERC20)</option>
+        <option value="binance" selected>Binance Smart Chain (BSC)</option>
+        <option value="tron" selected>Tron (TRX, TRC20)</option>
+        <option value="solana" selected>Solana (SOL)</option>
+        <option value="polygon" selected>Polygon (MATIC)</option>
+      </select>
+    </div>
+
+    <button id="generateSeed">🔓 Gerar Nova SEED com 18 Palavras</button>
+    <button id="checkAll" disabled>🔍 Verificar Saldo em Todas as Blockchains</button>
+
+    <div id="loading" class="loading" style="display: none;">⏳ Verificando saldos... Isso pode levar alguns minutos.</div>
+
+    <div id="output">
+      <!-- Inserido via JS -->
+    </div>
+  </div>
+
+  <!-- Bibliotecas necessárias (CDN) -->
+  <script src="https://cdn.jsdelivr.net/npm/bip39@3.0.4/bip39.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/ethers@5.7.2/ethers.umd.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@tronscan/client@3.1.0/dist/tronscan-client.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@solana/web3.js@1.78.0/lib/index.iife.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/axios/dist/axios.min.js"></script>
+  <script>
+    // =============================================
+    // 🔐 Funções de geração de seed BIP39
+    // =============================================
+    function generateBip39Seed() {
+      const entropy = Buffer.from(crypto.getRandomValues(new Uint8Array(32)));
+      const mnemonic = bip39.entropyToMnemonic(entropy);
+      return mnemonic;
+    }
+
+    // =============================================
+    // 🌐 Funções para gerar endereços por blockchain
+    // =============================================
+    async function getEthereumAddress(mnemonic) {
+      const seed = await bip39.mnemonicToSeed(mnemonic);
+      const path = "m/44'/60'/0'/0/0";
+      const wallet = ethers.Wallet.fromMnemonic(mnemonic, path);
+      return wallet.address;
+    }
+
+    async function getBscAddress(mnemonic) {
+      return getEthereumAddress(mnemonic); // Mesma implementação que Ethereum (mudar path se necessário)
+    }
+
+    async function getTronAddress(mnemonic) {
+      const seed = await bip39.mnemonicToSeed(mnemonic);
+      const hdNode = ethers.utils.HDNode.fromSeed(seed);
+      const path = "m/44'/195'/0'/0/0";
+      const privateKey = hdNode.privateKey;
+      // Tron usava endereços base58 antes, hoje usa hex (igual Ethereum)
+      const tronAddressHex = ethers.utils.computeAddress(privateKey);
+      const addressHex = tronAddressHex.replace('0x', '');
+      // Conversão simplificada (pra fins de endereço público)
+      return ethers.utils.getAddress(addressHex); // Formato EIP55 (checksum)
+    }
+
+    async function getSolanaAddress(mnemonic) {
+      const seed = await bip39.mnemonicToSeed(mnemonic);
+      const path = "m/44'/501'/0'/0'";
+      const derivedSeed = bip39.mnemonicToSeed(mnemonic) + Buffer.from(path, 'utf8').toString('hex');
+      // Simplificação: usar a seed para gerar uma chave pública Solana
+      // (essa é uma implementação simplificada, Solana usa derivação curva ed25519)
+      // Para produção, usar lib oficial: @solana/web3.js
+      const keypair = await window.solanaWeb3.Keypair.fromSeed(seed.slice(0, 32));
+      return keypair.publicKey.toString();
+    }
+
+    async function getPolygonAddress(mnemonic) {
+      return getEthereumAddress(mnemonic); // Polygon é uma sidechain de Ethereum
+    }
+
+    // =============================================
+    // 💰 Funções para verificar saldos por blockchain
+    // =============================================
+    async function getEthereumBalance(address) {
+      try {
+        const url = `https://api.etherscan.io/api?module=account&action=balance&address=${address}&tag=latest&apikey=YourApiKeyToken`; // Substitua apikey real
+        const res = await axios.get(url);
+        return parseFloat(ethers.utils.formatEther(res.data.result)) || 0;
+      } catch (e) {
+        console.error("Erro ao buscar Ethereum balance:", e);
+        return 0;
+      }
+    }
+
+    async function getBscBalance(address) {
+      try {
+        const url = `https://api.bscscan.com/api?module=account&action=balance&address=${address}&tag=latest&apikey=YourApiKeyToken`;
+        const res = await axios.get(url);
+        return parseFloat(ethers.utils.formatEther(res.data.result)) || 0;
+      } catch (e) {
+        console.error("Erro ao buscar BSC balance:", e);
+        return 0;
+      }
+    }
+
+    async function getTronBalance(address) {
+      try {
+        const url = `https://api.tronscan.org/api/account?address=${address}`;
+        const res = await axios.get(url);
+        const tronBalance = res.data.data[0]?.balance / 1000000 || 0;
+        return tronBalance;
+      } catch (e) {
+        console.error("Erro ao buscar Tron balance:", e);
+        return 0;
+      }
+    }
+
+    async function getSolanaBalance(address) {
+      try {
+        // Usando endpoint público do Solana
+        const url = `https://api.mainnet-beta.solana.com`;
+        const payload = {
+          jsonrpc: "2.0",
+          id: 1,
+          method: "getBalance",
+          params: [address]
+        };
+        const res = await axios.post(url, payload);
+        return res.data.result.value / 1000000000 || 0;
+      } catch (e) {
+        console.error("Erro ao buscar Solana balance:", e);
+        return 0;
+      }
+    }
+
+    async function getPolygonBalance(address) {
+      try {
+        const url = `https://api.polygonscan.com/api?module=account&action=balance&address=${address}&tag=latest&apikey=YourApiKeyToken`;
+        const res = await axios.get(url);
+        return parseFloat(ethers.utils.formatEther(res.data.result)) || 0;
+      } catch (e) {
+        console.error("Erro ao buscar Polygon balance:", e);
+        return 0;
+      }
+    }
+
+    // =============================================
+    // ⚙️ Função principal pra verificar todas as blockchains
+    // =============================================
+    async function checkAllBalances(mnemonic) {
+      const blockchains = Array.from(document.getElementById('blockchains').selectedOptions).map(opt => opt.value);
+      const results = [];
+      const addressPromises = {};
+
+      // Gerar endereços para as blockchains selecionadas
+      if (blockchains.includes('ethereum')) addressPromises.ethereum = getEthereumAddress(mnemonic);
+      if (blockchains.includes('binance')) addressPromises.binance = getBscAddress(mnemonic);
+      if (blockchains.includes('tron')) addressPromises.tron = getTronAddress(mnemonic);
+      if (blockchains.includes('solana')) addressPromises.solana = getSolanaAddress(mnemonic);
+      if (blockchains.includes('polygon')) addressPromises.polygon = getPolygonAddress(mnemonic);
+
+      // Aguardar todos os endereços
+      const addresses = await Promise.allSettled(Object.entries(addressPromises));
+
+      // Montar objetos com endereço e blockchain
+      const addressesByChain = addresses.reduce((acc, { status, value, reason }) => {
+        if (status === 'fulfilled') {
+          const [chain, address] = value;
+          acc[chain] = address;
+        }
+        return acc;
+      }, {});
+
+      // Verificar saldos para cada blockchain
+      if (addressesByChain.ethereum !== undefined) {
+        const balance = await getEthereumBalance(addressesByChain.ethereum);
+        results.push({ chain: "Ethereum", address: addressesByChain.ethereum, balance });
+      }
+      if (addressesByChain.binance !== undefined) {
+        const balance = await getBscBalance(addressesByChain.binance);
+        results.push({ chain: "Binance Smart Chain", address: addressesByChain.binance, balance });
+      }
+      if (addressesByChain.tron !== undefined) {
+        const balance = await getTronBalance(addressesByChain.tron);
+        results.push({ chain: "Tron", address: addressesByChain.tron, balance });
+      }
+      if (addressesByChain.solana !== undefined) {
+        const balance = await getSolanaBalance(addressesByChain.solana);
+        results.push({ chain: "Solana", address: addressesByChain.solana, balance });
+      }
+      if (addressesByChain.polygon !== undefined) {
+        const balance = await getPolygonBalance(addressesByChain.polygon);
+        results.push({ chain: "Polygon", address: addressesByChain.polygon, balance });
+      }
+
+      return results;
+    }
+
+    // =============================================
+    // 📤 Função pra exibir resultados
+    // =============================================
+    function displayResults(mnemonic, results) {
+      const outputDiv = document.getElementById('output');
+      outputDiv.innerHTML = '';
+
+      if (results.length === 0) {
+        outputDiv.innerHTML = `<p class="error">❌ Nenhum saldo encontrado em nenhuma das blockchains solicitadas.</p>`;
+        return;
+      }
+
+      // Filtrar apenas blockchains com saldo > 0
+      const nonZeroResults = results.filter(r => r.balance > 0);
+
+      if (nonZeroResults.length === 0) {
+        outputDiv.innerHTML = `<p class="error">⚠️ Nenhuma blockchain retornou saldo > 0.</p>`;
+        outputDiv.innerHTML += `<p><strong>SEED gerada:</strong></p><div class="seed-box">${mnemonic}</div>`;
+        return;
+      }
+
+      // Exibir SEED
+      outputDiv.innerHTML += `<p><strong>🔑 SEED gerada (18 palavras):</strong></p>`;
+      outputDiv.innerHTML += `<div class="seed-box">${mnemonic}</div>`;
+
+      // Exibir resultados
+      outputDiv.innerHTML += `<p><strong>💰 Blockchains com saldo > 0:</strong></p>`;
+
+      nonZeroResults.forEach(({ chain, address, balance }) => {
+        outputDiv.innerHTML += `
+          <div class="address-box">
+            <strong>${chain}</strong><br>
+            <em>Endereço:</em> ${address}<br>
+            <strong>Saldo:</strong> <span class="success">${balance.toFixed(6)}</span>
+          </div>
+        `;
+      });
+
+      // Exibir todas as blockchains verificadas (mesmo que saldo 0)
+      const allInfo = results.map(({ chain, address, balance }) => {
+        balance = balance.toFixed(6);
+        return `
+          <div class="address-box">
+            <strong>${chain}</strong><br>
+            <em>Endereço:</em> ${address}<br>
+            <strong>Saldo:</strong> ${balance === '0.000000' ? '0.000000' : `<span class="success">${balance}</span>`}
+          </div>
+        `;
+      }).join('');
+
+      outputDiv.innerHTML += `<p><strong>ℹ️ Todas as blockchains verificadas:</strong></p>${allInfo}`;
+    }
+
+    // =============================================
+    // ⚡ Event listeners
+    // =============================================
+    document.getElementById('generateSeed').addEventListener('click', () => {
+      const seed = generateBip39Seed();
+      document.getElementById('output').innerHTML = `<p>SEED gerada. Clique em "Verificar Saldo" para prosseguir.</p>
+      <div class="seed-box">${seed}</div>`;
+      document.getElementById('checkAll').disabled = false;
+    });
+
+    document.getElementById('checkAll').addEventListener('click', async () => {
+      const blockchains = Array.from(document.getElementById('blockchains').selectedOptions);
+      if (blockchains.length === 0) {
+        alert("Selecione pelo menos uma blockchain.");
+        return;
+      }
+
+      document.getElementById('loading').style.display = 'block';
+      document.getElementById('checkAll').disabled = true;
+
+      // Extrair a seed da tela
+      const seedText = document.querySelector('.seed-box')?.textContent;
+      if (!seedText) {
+        alert("Gere uma SEED primeiro.");
+        document.getElementById('loading').style.display = 'none';
+        document.getElementById('checkAll').disabled = false;
+        return;
+      }
+
+      try {
+        const results = await checkAllBalances(seedText);
+        displayResults(seedText, results);
+      } catch (error) {
+        console.error("Erro:", error);
+        document.getElementById('output').innerHTML = `
+          <p class="error">❌ Erro ao verificar saldos: ${error.message}</p>
+        `;
+      } finally {
+        document.getElementById('loading').style.display = 'none';
+        document.getElementById('checkAll').disabled = false;
+      }
+    });
+
+    // Iniciar
+    document.addEventListener('DOMContentLoaded', () => {
+      // Inicializa Solana Web3
+      window.solanaWeb3 = solanaWeb3;
+    });
+  </script>
+</body>
+</html>
